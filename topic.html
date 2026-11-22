@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Mesh · CRDT Field Console</title>
+<style>
+  :root{
+    --bg: #10161B;
+    --panel: #182129;
+    --panel-2: #1E2A33;
+    --line: #2A3944;
+    --ink: #E7EEF2;
+    --muted: #85A0AC;
+    --teal: #35C6A6;
+    --teal-dim: #1E6E5D;
+    --amber: #E8A33D;
+    --amber-dim: #6E4F1E;
+    --rust: #E2574C;
+    --blue: #5B8DEF;
+    --mono: ui-monospace, SFMono-Regular, "IBM Plex Mono", Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, "Segoe UI", Roboto, -apple-system, sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--ink);font-family:var(--sans);}
+  body{padding:22px 26px 40px;}
+
+  .eyebrow{
+    font-family:var(--mono); font-size:11px; letter-spacing:2.5px; color:var(--teal);
+    text-transform:uppercase; margin:0 0 4px;
+  }
+  h1{
+    font-size:26px; margin:0 0 4px; font-weight:700; letter-spacing:-0.3px;
+  }
+  .sub{ color:var(--muted); font-size:13.5px; margin:0 0 20px; max-width:720px; line-height:1.5;}
+  .sub code{font-family:var(--mono); background:var(--panel-2); padding:1px 5px; border-radius:3px; font-size:12.5px;}
+
+  .layout{
+    display:grid; grid-template-columns: 1.35fr 1fr; gap:18px; align-items:start;
+  }
+  @media (max-width: 980px){ .layout{grid-template-columns: 1fr;} }
+
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:10px;
+    padding:16px 16px 18px;
+  }
+  .card h2{
+    font-size:12px; text-transform:uppercase; letter-spacing:1.6px; color:var(--muted);
+    margin:0 0 12px; font-weight:600;
+  }
+
+  /* --- network graph --- */
+  #graphWrap{ position:relative; }
+  svg{ width:100%; height:auto; display:block; background:
+      radial-gradient(circle at 12% 8%, #16202A 0%, #0F161B 70%); border-radius:8px; }
+  .edge{ stroke:#334752; stroke-width:2; }
+  .edge.on-path{ stroke:var(--rust); stroke-width:4; }
+  .node-ring{ fill:none; stroke-width:2; }
+  .node circle.body{ cursor:pointer; transition: fill .25s ease, stroke .25s ease; }
+  .node text{ font-family:var(--mono); font-size:13px; font-weight:700; fill:#0B1216; pointer-events:none; }
+  .node.offline .body{ fill:var(--rust); }
+  .node.online .body{ fill:var(--teal); }
+  .node.bs .body{ fill:var(--blue); }
+  .node text.offline-label{ fill:var(--rust); font-family:var(--mono); font-size:10px; pointer-events:none;}
+  .offline-ring{ fill:none; stroke:var(--rust); stroke-dasharray:4 3; stroke-width:1.6; opacity:0.9; }
+  .pulse{ opacity:0; }
+
+  .legend{ display:flex; gap:16px; font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:10px; flex-wrap:wrap;}
+  .legend span{ display:inline-flex; align-items:center; gap:6px; }
+  .dot{ width:9px; height:9px; border-radius:50%; display:inline-block; }
+
+  .hint{ font-family:var(--mono); font-size:11.5px; color:var(--muted); margin-top:8px; }
+
+  /* --- controls --- */
+  .btnrow{ display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+  button{
+    font-family:var(--mono); font-size:12px; letter-spacing:0.3px; color:var(--ink);
+    background:var(--panel-2); border:1px solid var(--line); border-radius:6px;
+    padding:8px 12px; cursor:pointer; transition: border-color .15s, background .15s;
+  }
+  button:hover{ border-color:var(--teal); background:#20323A; }
+  button.primary{ background:var(--teal-dim); border-color:var(--teal); color:#DFFBF3; }
+  button.primary:hover{ background:#218870; }
+  button.warn{ background:var(--amber-dim); border-color:var(--amber); color:#FFE9C7; }
+  button:disabled{ opacity:0.35; cursor:not-allowed; }
+
+  .formrow{ display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+  select, input[type=number]{
+    font-family:var(--mono); font-size:12px; background:var(--panel-2); color:var(--ink);
+    border:1px solid var(--line); border-radius:6px; padding:7px 8px;
+  }
+  label.mini{ font-family:var(--mono); font-size:11px; color:var(--muted); }
+
+  /* --- log --- */
+  #log{
+    font-family:var(--mono); font-size:11.6px; line-height:1.65; height:260px; overflow-y:auto;
+    background:#0D1418; border:1px solid var(--line); border-radius:8px; padding:10px 12px;
+    color:#B9CBD3;
+  }
+  #log .t0{ color:var(--muted); }
+  #log .ev-route{ color:var(--rust); }
+  #log .ev-verify{ color:var(--teal); }
+  #log .ev-sys{ color:var(--blue); }
+
+  /* --- convergence panel --- */
+  .hashgrid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(84px,1fr)); gap:8px; margin-bottom:10px;}
+  .hashchip{
+    font-family:var(--mono); font-size:10.5px; text-align:center; border-radius:6px;
+    padding:8px 4px; border:1px solid var(--line); background:var(--panel-2); color:var(--muted);
+  }
+  .hashchip.match{ border-color:var(--teal); color:#DFFBF3; background:#153B32; }
+  .hashchip .id{ font-weight:700; color:var(--ink); display:block; margin-bottom:2px; font-size:11.5px;}
+  .status{
+    display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:8px;
+    font-family:var(--mono); font-size:12.5px; border:1px solid var(--line); background:var(--panel-2);
+  }
+  .status .led{ width:11px; height:11px; border-radius:50%; background:#41525C; box-shadow:0 0 0 rgba(0,0,0,0); transition: all .3s;}
+  .status.locked .led{ background:var(--teal); box-shadow:0 0 10px 2px rgba(53,198,166,0.65); }
+  .status.locked{ border-color:var(--teal); }
+
+  footer{ margin-top:22px; color:var(--muted); font-family:var(--mono); font-size:11px; text-align:center; }
+</style>
+</head>
+<body>
+
+<div class="eyebrow">Distributed Systems &middot; Field Deployment Simulator</div>
+<h1>Mesh &middot; CRDT Field Console</h1>
+<p class="sub">
+  9 simulated nodes (1 base station + 8 field sensors). Click a node to kill or restore its
+  radio link. Inject readings on any node, including offline ones. Everything runs client-side
+  in this page &mdash; no server, no network required, which is rather the point.
+  Flooding transport: <code>(origin_id, seq)</code> dedup. Consistency: <code>G-Set / PN-Counter / LWW-Map</code> CRDTs.
+</p>
+
+<div class="layout">
+
+  <div class="card">
+    <h2>Network Topology</h2>
+    <div id="graphWrap">
+      <svg id="graph" viewBox="0 0 900 520"></svg>
+    </div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--blue)"></i> base station</span>
+      <span><i class="dot" style="background:var(--teal)"></i> online</span>
+      <span><i class="dot" style="background:var(--rust)"></i> offline (radio range = 0)</span>
+      <span><i class="dot" style="background:var(--rust); border-radius:2px;"></i> active delivery path</span>
+    </div>
+    <div class="hint">Click any sensor node (not the base station) to toggle its radio range.</div>
+  </div>
+
+  <div class="card">
+    <h2>Controls</h2>
+    <div class="btnrow">
+      <button class="primary" id="btnDemo">Run Full Demo Scenario</button>
+      <button id="btnStep">Step 1 Tick</button>
+      <button id="btnRun">Run to Convergence</button>
+      <button id="btnReset">Reset</button>
+    </div>
+    <div class="formrow">
+      <label class="mini">Inject on</label>
+      <select id="injNode"></select>
+      <select id="injKind">
+        <option value="water_level_m">water_level_m</option>
+        <option value="soil_moisture_pct">soil_moisture_pct</option>
+        <option value="battery_pct">battery_pct</option>
+      </select>
+      <input type="number" id="injVal" value="2.30" step="0.1" style="width:80px;">
+      <button id="btnInject">Inject Reading</button>
+    </div>
+
+    <h2 style="margin-top:16px;">Convergence</h2>
+    <div class="status" id="statusBox">
+      <span class="led"></span>
+      <span id="statusText">not yet checked</span>
+    </div>
+    <div class="hashgrid" id="hashGrid" style="margin-top:10px;"></div>
+  </div>
+
+</div>
+
+<div class="card" style="margin-top:18px;">
+  <h2>Event Log</h2>
+  <div id="log"></div>
+</div>
+
+<footer>tick: <span id="tickCount">0</span> &nbsp;&middot;&nbsp; messages delivered (cumulative): <span id="msgCount">0</span></footer>
+
+<script>
+// =====================================================================
+// CRDT layer (mirrors crdt.py)
+// =====================================================================
+class LamportClock{
+  constructor(){ this.time = 0; }
+  tick(){ this.time += 1; return this.time; }
+  observe(t){ this.time = Math.max(this.time, t) + 1; return this.time; }
+}
+
+class GSet{
+  constructor(){ this.items = new Map(); } // key "origin:seq" -> reading tuple
+  add(r){ const k = r.node_id+":"+r.seq; if(!this.items.has(k)) this.items.set(k, r); }
+  merge(other){ for(const [k,v] of other.items){ if(!this.items.has(k)) this.items.set(k,v); } }
+  snapshot(){ return [...this.items.values()].map(r=>[r.node_id,r.seq,r.ts,r.kind,r.value])
+                 .sort((a,b)=> a.join()<b.join()?-1:1); }
+}
+
+class PNCounter{
+  constructor(ids){ this.p={}; this.n={}; ids.forEach(i=>{this.p[i]=0; this.n[i]=0;}); }
+  increment(id, amt=1){ this.p[id]=(this.p[id]||0)+amt; }
+  merge(other){
+    for(const k in other.p) this.p[k]=Math.max(this.p[k]||0, other.p[k]);
+    for(const k in other.n) this.n[k]=Math.max(this.n[k]||0, other.n[k]);
+  }
+  snapshot(){ return [JSON.stringify(this.p), JSON.stringify(this.n)]; }
+}
+
+class LWWMap{
+  constructor(){ this.regs = {}; } // key -> {value, ts, writer}
+  set(key, value, ts, writer){
+    const cur = this.regs[key];
+    if(!cur || ts > cur.ts || (ts===cur.ts && writer > cur.writer)){
+      this.regs[key] = {value, ts, writer};
+    }
+  }
+  merge(other){
+    for(const k in other.regs){
+      const o = other.regs[k], cur = this.regs[k];
+      if(!cur || o.ts > cur.ts || (o.ts===cur.ts && o.writer > cur.writer)) this.regs[k]=o;
+    }
+  }
+  snapshot(){ return Object.keys(this.regs).sort().map(k=>[k, this.regs[k].value, this.regs[k].ts, this.regs[k].writer]); }
+}
+
+class MembershipSet{
+  constructor(){ this.ids = new Set(); }
+  add(id){ this.ids.add(id); }
+  merge(other){ for(const id of other.ids) this.ids.add(id); }
+  snapshot(){ return [...this.ids].sort(); }
+}
+
+class NodeState{
+  constructor(allIds){
+    this.readings = new GSet();
+    this.alertCount = new PNCounter(allIds);
+    this.battery = new LWWMap();
+    this.membership = new MembershipSet();
+  }
+  merge(other){
+    this.readings.merge(other.readings);
+    this.alertCount.merge(other.alertCount);
+    this.battery.merge(other.battery);
+    this.membership.merge(other.membership);
+  }
+  snapshot(){
+    return { r: this.readings.snapshot(), c: this.alertCount.snapshot(),
+             b: this.battery.snapshot(), m: this.membership.snapshot() };
+  }
+  hash(){
+    // simple deterministic string hash (FNV-1a) over the sorted JSON snapshot
+    const s = JSON.stringify(this.snapshot());
+    let h = 0x811c9dc5;
+    for(let i=0;i<s.length;i++){ h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return (h>>>0).toString(16).padStart(8,'0');
+  }
+}
+
+// =====================================================================
+// Mesh layer (mirrors mesh.py)
+// =====================================================================
+const POSITIONS = {
+  BS:[108.75,280], N1:[255,130.4], N2:[274.5,412], N3:[450,77.6], N4:[469.5,271.2],
+  N5:[489,456], N6:[664.5,165.6], N7:[684,359.2], N8:[840,271.2],
+};
+const ALL_IDS = Object.keys(POSITIONS);
+const RANGE_PX = 225;
+
+class MeshNode{
+  constructor(id){
+    this.id = id;
+    this.pos = POSITIONS[id];
+    this.online = true;
+    this.state = new NodeState(ALL_IDS);
+    this.clock = new LamportClock();
+    this.seen = new Set();
+    this.outbox = [];
+    this.inbox = [];
+    this.seq = 0;
+    this.state.membership.add(id);
+  }
+  nextSeq(){ this.seq += 1; return this.seq; }
+  distTo(o){ const dx=this.pos[0]-o.pos[0], dy=this.pos[1]-o.pos[1]; return Math.hypot(dx,dy); }
+  inRangeOf(o){ return this.online && o.online && this.distTo(o) <= RANGE_PX; }
+
+  announcePresence(ttl=8){
+    const seq=this.nextSeq(), ts=this.clock.tick();
+    const msg={origin:this.id, seq, ttl, kind:'membership', payload:[this.id], ts, path:[this.id]};
+    this.seen.add(msg.origin+':'+msg.seq); this.outbox.push(msg); return msg;
+  }
+  injectReading(kind, value, ttl=8){
+    const seq=this.nextSeq(), ts=this.clock.tick();
+    const r = {node_id:this.id, seq, ts, kind, value};
+    this.state.readings.add(r);
+    const msg={origin:this.id, seq, ttl, kind:'reading', payload:r, ts, path:[this.id]};
+    this.seen.add(msg.origin+':'+msg.seq); this.outbox.push(msg); return msg;
+  }
+  reportBattery(pct, ttl=8){
+    const seq=this.nextSeq(), ts=this.clock.tick();
+    this.state.battery.set(this.id, pct, ts, this.id);
+    const msg={origin:this.id, seq, ttl, kind:'battery', payload:[this.id,pct,ts,this.id], ts, path:[this.id]};
+    this.seen.add(msg.origin+':'+msg.seq); this.outbox.push(msg); return msg;
+  }
+  _apply(msg){
+    this.clock.observe(msg.ts);
+    if(msg.kind==='reading'){ this.state.readings.add(msg.payload); }
+    else if(msg.kind==='battery'){ const [who,pct,ts,writer]=msg.payload; this.state.battery.set(who,pct,ts,writer); }
+    else if(msg.kind==='membership'){ this.state.membership.add(msg.payload[0]); }
+  }
+}
+
+class MeshNetwork{
+  constructor(){
+    this.nodes = {}; ALL_IDS.forEach(id=> this.nodes[id]=new MeshNode(id));
+    this.tickCount = 0;
+    this.prevEdges = new Set();
+    this.deliveryLog = [];
+    this.totalDelivered = 0;
+  }
+  currentEdges(){
+    const edges=[];
+    for(let i=0;i<ALL_IDS.length;i++) for(let j=i+1;j<ALL_IDS.length;j++){
+      const a=this.nodes[ALL_IDS[i]], b=this.nodes[ALL_IDS[j]];
+      if(a.inRangeOf(b)) edges.push([a.id,b.id]);
+    }
+    return edges;
+  }
+  setOnline(id, online){ this.nodes[id].online = online; }
+
+  tick(){
+    this.tickCount += 1;
+    const edges = this.currentEdges();
+    const edgeSet = new Set(edges.map(e=>e.slice().sort().join('|')));
+    const neighbors = {}; ALL_IDS.forEach(id=>neighbors[id]=[]);
+    edges.forEach(([a,b])=>{ neighbors[a].push(b); neighbors[b].push(a); });
+
+    // phase 0: anti-entropy state exchange on newly formed links
+    const newEdges = [...edgeSet].filter(e=>!this.prevEdges.has(e));
+    newEdges.forEach(e=>{
+      const [a,b] = e.split('|');
+      const na=this.nodes[a], nb=this.nodes[b];
+      na.state.merge(nb.state); nb.state.merge(na.state);
+    });
+    this.prevEdges = edgeSet;
+
+    // phase 1: broadcast outbox to in-range neighbors (retry later if isolated)
+    ALL_IDS.forEach(id=>{
+      const node = this.nodes[id];
+      if(neighbors[id].length>0){
+        node.outbox.forEach(msg=>{
+          neighbors[id].forEach(nbId=> this.nodes[nbId].inbox.push(msg));
+        });
+        node.outbox = [];
+      }
+    });
+
+    // phase 2: process inbox -- dedup, apply, requeue for flooding
+    let delivered = 0;
+    ALL_IDS.forEach(id=>{
+      const node = this.nodes[id];
+      const nextOutbox = [];
+      node.inbox.forEach(msg=>{
+        const key = msg.origin+':'+msg.seq;
+        if(node.seen.has(key)) return;
+        node.seen.add(key);
+        node._apply(msg);
+        delivered += 1;
+        this.deliveryLog.push({tick:this.tickCount, node:id, origin:msg.origin, seq:msg.seq,
+                                kind:msg.kind, path:[...msg.path, id]});
+        if(msg.ttl > 1){
+          nextOutbox.push({origin:msg.origin, seq:msg.seq, ttl:msg.ttl-1, kind:msg.kind,
+                            payload:msg.payload, ts:msg.ts, path:[...msg.path, id]});
+        }
+      });
+      node.outbox.push(...nextOutbox);
+      node.inbox = [];
+    });
+    this.totalDelivered += delivered;
+    return delivered;
+  }
+  runUntilQuiescent(maxTicks=40){
+    let idle=0;
+    for(let i=0;i<maxTicks;i++){
+      const d=this.tick();
+      if(d===0){ idle+=1; if(idle>=2) break; } else idle=0;
+    }
+  }
+  stateHashes(){ const h={}; ALL_IDS.forEach(id=> h[id]=this.nodes[id].state.hash()); return h; }
+  findDeliveryPath(origin, seq, dest){
+    for(const e of this.deliveryLog){
+      if(e.origin===origin && e.seq===seq && e.node===dest) return e.path;
+    }
+    return null;
+  }
+}
+
+// =====================================================================
+// UI wiring
+// =====================================================================
+let net = new MeshNetwork();
+let lastTracePath = null;
+let running = false;
+
+const svg = document.getElementById('graph');
+const injNode = document.getElementById('injNode');
+ALL_IDS.forEach(id=>{ const o=document.createElement('option'); o.value=id; o.textContent=id; injNode.appendChild(o); });
+
+function logLine(text, cls){
+  const el = document.getElementById('log');
+  const line = document.createElement('div');
+  if(cls) line.className = cls;
+  line.textContent = text;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+function edgeKey(a,b){ return [a,b].sort().join('|'); }
+
+function pathEdges(path){
+  const s = new Set();
+  if(!path) return s;
+  for(let i=0;i<path.length-1;i++) s.add(edgeKey(path[i],path[i+1]));
+  return s;
+}
+
+function render(){
+  const edges = net.currentEdges();
+  const highlightSet = pathEdges(lastTracePath);
+  let svgHtml = '';
+
+  edges.forEach(([a,b])=>{
+    const [x1,y1]=POSITIONS[a], [x2,y2]=POSITIONS[b];
+    const onPath = highlightSet.has(edgeKey(a,b));
+    svgHtml += `<line class="edge ${onPath?'on-path':''}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}"/>`;
+  });
+
+  ALL_IDS.forEach(id=>{
+    const [x,y] = POSITIONS[id];
+    const node = net.nodes[id];
+    const isBs = id==='BS';
+    const cls = isBs ? 'bs' : (node.online ? 'online' : 'offline');
+    const r = isBs ? 22 : 19;
+    svgHtml += `<g class="node ${cls}" data-id="${id}">`;
+    if(!node.online){
+      svgHtml += `<circle class="offline-ring" cx="${x}" cy="${y}" r="${r+9}"/>`;
+    }
+    svgHtml += `<circle class="body" cx="${x}" cy="${y}" r="${r}"/>`;
+    svgHtml += `<text x="${x}" y="${y+4}" text-anchor="middle">${id}</text>`;
+    if(!node.online){
+      svgHtml += `<text class="offline-label" x="${x}" y="${y+r+20}" text-anchor="middle">offline</text>`;
+    }
+    svgHtml += `</g>`;
+  });
+
+  svg.innerHTML = svgHtml;
+  svg.querySelectorAll('.node').forEach(g=>{
+    g.addEventListener('click', ()=>{
+      const id = g.getAttribute('data-id');
+      if(id==='BS') return;
+      net.setOnline(id, !net.nodes[id].online);
+      logLine(`[t=${net.tickCount}] ${id} radio ${net.nodes[id].online ? 'RESTORED' : 'KILLED'} (manual)`, 'ev-sys');
+      render();
+    });
+  });
+
+  document.getElementById('tickCount').textContent = net.tickCount;
+  document.getElementById('msgCount').textContent = net.totalDelivered;
+  renderConvergence();
+}
+
+function renderConvergence(){
+  const hashes = net.stateHashes();
+  const unique = new Set(Object.values(hashes));
+  const grid = document.getElementById('hashGrid');
+  grid.innerHTML = '';
+  Object.entries(hashes).forEach(([id,h])=>{
+    const chip = document.createElement('div');
+    chip.className = 'hashchip' + (unique.size===1 ? ' match' : '');
+    chip.innerHTML = `<span class="id">${id}</span>${h}`;
+    grid.appendChild(chip);
+  });
+  const box = document.getElementById('statusBox');
+  const text = document.getElementById('statusText');
+  if(unique.size===1){
+    box.classList.add('locked');
+    text.textContent = `CONVERGED -- all ${ALL_IDS.length} nodes hold identical state (${[...unique][0]})`;
+  } else {
+    box.classList.remove('locked');
+    text.textContent = `${unique.size} distinct state(s) across ${ALL_IDS.length} nodes -- not yet converged`;
+  }
+}
+
+function doStep(){
+  const d = net.tick();
+  logLine(`[t=${net.tickCount}] tick: delivered ${d} new message(s)`);
+  render();
+}
+
+function doRunToConvergence(){
+  net.runUntilQuiescent(60);
+  logLine(`[t=${net.tickCount}] settled -- ran to quiescence`, 'ev-sys');
+  render();
+}
+
+function injectFromForm(){
+  const id = injNode.value, kind = document.getElementById('injKind').value;
+  const val = parseFloat(document.getElementById('injVal').value);
+  const node = net.nodes[id];
+  const msg = kind==='battery_pct' ? node.reportBattery(val) : node.injectReading(kind, val);
+  logLine(`[t=${net.tickCount}] injected on ${id}: ${kind}=${val}  (seq=${msg.seq}, online=${node.online})`);
+  render();
+}
+
+async function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+async function runFullDemo(){
+  if(running) return;
+  running = true;
+  setControlsEnabled(false);
+  reset(false);
+  logLine('=== Running full demo scenario ===', 'ev-sys');
+
+  ALL_IDS.forEach(id=> net.nodes[id].announcePresence());
+  render(); await sleep(400);
+
+  const isolate = ['N5','N7'];
+  isolate.forEach(id=> net.setOnline(id, false));
+  logLine(`[t=0] Disconnecting ${isolate.join(', ')} (radio range -> 0)`, 'ev-sys');
+  render(); await sleep(500);
+
+  const injections = [
+    ['N5','water_level_m',2.30], ['N7','soil_moisture_pct',41.0],
+    ['N2','water_level_m',1.10], ['BS','battery_pct',91.0],
+  ];
+  injections.forEach(([id,kind,val])=>{
+    const node = net.nodes[id];
+    const msg = kind==='battery_pct' ? node.reportBattery(val) : node.injectReading(kind, val);
+    logLine(`[t=0] Injected on ${id}: ${kind}=${val} (seq=${msg.seq})`);
+  });
+  render(); await sleep(500);
+
+  logLine('[hold] Running 5 ticks while isolated nodes stay disconnected...', 'ev-sys');
+  for(let i=0;i<5;i++){
+    const d = net.tick();
+    logLine(`  [t=${net.tickCount}] delivered ${d} new message(s)`);
+    render(); await sleep(450);
+  }
+
+  const order = [...isolate].sort(()=>Math.random()-0.5);
+  logLine(`[reconnect] Restoring radio in RANDOM order: ${order.join(', ')}`, 'ev-sys');
+  for(const id of order){
+    net.setOnline(id, true);
+    logLine(`  [t=${net.tickCount}] ${id} reconnected`);
+    render(); await sleep(450);
+    for(let i=0;i<3;i++){
+      const d = net.tick();
+      logLine(`    [t=${net.tickCount}] delivered ${d} new message(s)`);
+      render(); await sleep(400);
+    }
+  }
+
+  logLine('[settle] Running until quiescent...', 'ev-sys');
+  net.runUntilQuiescent(40);
+  render(); await sleep(300);
+
+  const hashes = net.stateHashes();
+  const converged = new Set(Object.values(hashes)).size === 1;
+  logLine(`[verify] CONVERGED: ${converged}`, 'ev-verify');
+
+  for(const [id,kind] of [['N5','water_level_m'],['N7','soil_moisture_pct']]){
+    const origin = id; // seq 1 was the first injected reading for that node
+    const path = net.findDeliveryPath(origin, 1, 'BS');
+    if(path){
+      logLine(`[route] ${id} (${kind}) reached BS via: ${path.join(' -> ')} (${path.length-1} hop(s), no direct link ever existed)`, 'ev-route');
+      lastTracePath = path;
+    } else {
+      logLine(`[route] WARNING: ${id}'s reading never reached BS`, 'ev-route');
+    }
+  }
+  render();
+  setControlsEnabled(true);
+  running = false;
+}
+
+function setControlsEnabled(enabled){
+  ['btnDemo','btnStep','btnRun','btnReset','btnInject'].forEach(id=>{
+    document.getElementById(id).disabled = !enabled;
+  });
+}
+
+function reset(doLog=true){
+  net = new MeshNetwork();
+  lastTracePath = null;
+  document.getElementById('log').innerHTML = '';
+  if(doLog) logLine('=== Reset ===', 'ev-sys');
+  render();
+}
+
+document.getElementById('btnDemo').addEventListener('click', runFullDemo);
+document.getElementById('btnStep').addEventListener('click', doStep);
+document.getElementById('btnRun').addEventListener('click', doRunToConvergence);
+document.getElementById('btnReset').addEventListener('click', ()=>reset(true));
+document.getElementById('btnInject').addEventListener('click', injectFromForm);
+
+reset(false);
+logLine('Ready. Click "Run Full Demo Scenario" for the scripted partition/reconnect/converge demo,', 'ev-sys');
+logLine('or click nodes and inject readings manually to explore the protocol yourself.', 'ev-sys');
+</script>
+</body>
+</html>
